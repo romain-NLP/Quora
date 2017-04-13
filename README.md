@@ -30,8 +30,8 @@ A modifier :
 
 -créer una algorithme de classification basé sur la distance entre deux questions. Voir http://stackoverflow.com/questions/21979970/how-to-use-word2vec-to-calculate-the-similarity-distance-by-giving-2-words
 
--sauvegarder le word2vec.model créé (voir même lien)
+-sauvegarder le word2vec.model créé (voir même lien) : fait le 13/04
 
 -incorporer du tfidf
 
--matrice de confusion
+-matrice de confusion : fait le 13/04
