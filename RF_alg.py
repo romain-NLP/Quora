@@ -2,30 +2,31 @@
 
 import pandas as pd
 import numpy as np
-from sklearn.metrics import confusion_matrix
 import itertools
+import matplotlib.pyplot as plt
 
+from sklearn.metrics import confusion_matrix
 from sklearn import cross_validation
 from sklearn.ensemble import RandomForestClassifier
 
 path = "/Users/Romain/Documents/UChile/Matematicas/Semestre_4/Memoria/Problemas/Quora/Datos/"
 df_RF_train = pd.read_csv(path+'df_RF_train.csv',low_memory=False)
-df_q_vect_test = pd.read_csv(path+'df_q_vect_test.csv',low_memory=False)
+df_RF_test = pd.read_csv(path+'df_RF_test.csv',low_memory=False)
 
 # Initialize a Random Forest classifier with 100 trees
 forest = RandomForestClassifier(n_estimators = 100,n_jobs=-1,verbose=1) 
 print "RF inicializado"
 
 #Cross-validation
-kf = cross_validation.KFold(len(df_RF_train), n_folds=10)
-cm=np.zeros((2,2));
+kf = cross_validation.KFold(len(df_RF_train), n_folds=3)
+cm = np.zeros((2,2));
 for train_index, test_index in kf:
 
    X_train, X_test = df_RF_train.iloc[train_index,7:], df_RF_train.iloc[test_index,7:]
    y_train, y_test = df_RF_train.loc[train_index,'is_duplicate'], df_RF_train.loc[test_index,'is_duplicate']
 
    forest.fit(X_train, y_train)
-   cm+=confusion_matrix(y_test, forest.predict(X_test))
+   cm += confusion_matrix(y_test, forest.predict(X_test))
 
 def plot_confusion_matrix(cm, classes,
                           normalize=False,
