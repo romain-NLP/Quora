@@ -6,25 +6,43 @@ from sklearn.metrics import log_loss as loss
 
 
 class Model:
-    def __init__(self, trainDataset, testDataset=pd.DataFrame(), model = LogReg):
+    def __init__(self, trainDataset, testDataset=None, model = LogReg):
         self.OurModel= model() #RF, SVM, Reglog
-        pass
+        self.FeatureFunctions = [self.feat1,self.feat2,self.feat3]
+        self.FeatureName = ["name1", "name2", "name3"]
+        self.trainData = trainDataset
+        self.testData=testDataset if testDataset else pd.DataFrame()
+        self.loadFeatures()
 
-    def ComputeFeatures(self, features= [1,2,3]):
-        '''
-        Compute selected features, replace in existing (?) self.Features
-        :param features: 
-        :return: 
-        '''
-        featurefunction = [self.feat1,self.feat2,self.feat3]
-        self.Features = pd.DataFrame()
-        pass
+
+
+
 
     def saveFeatures(self, name='features.csv'):
         self.Features.to_csv(name)
 
     def loadFeatures(self, name='features.csv'):
-        pass
+        try:
+            self.Features = pd.read_csv(name, index_col=0)
+        except:
+            self.Features = pd.DataFrame()
+
+
+    def ComputeFeatures(self, train = True, features= [1,2,3], save=False):
+        '''
+        Compute selected features, replace in existing (?) self.Features
+        :param features: 
+        :return: 
+        '''
+        dataset = self.trainData if train else self.testData
+
+
+        for f in features:
+            self.Features[self.FeatureName[f]] = dataset.apply(self.FeatureFunctions[f], axis=1)
+
+        if save:
+            self.saveFeatures()
+
 
     def ApplyPreprocessing(self):
         #Preprocess string function
@@ -48,10 +66,18 @@ class Model:
 
     #Nos features
     def feat1(self):
-        pass
+        return 0
 
     def feat2(self):
-        pass
+        return 0
 
     def feat3(self):
-        pass
+        return 0
+
+
+
+if __name__ == "__main__":
+    TrainSet = pd.read_csv('train.csv')
+    TestSet = pd.read_csv('test.csv')
+    MonModele = Model(TrainSet,TestSet)
+
