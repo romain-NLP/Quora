@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 import numpy as np
-import functions_preproc as fn_pp
 from scipy import spatial
 from sklearn.linear_model import LogisticRegression as LogReg
 from sklearn.metrics import log_loss as loss
@@ -9,9 +8,12 @@ from sklearn.metrics import confusion_matrix as cm
 from sklearn.metrics import f1_score, make_scorer, confusion_matrix, accuracy_score, precision_score, recall_score
 from sklearn.model_selection import cross_val_score as CV
 from sklearn.feature_extraction.text import TfidfVectorizer
-
+import functions_preproc as fn_pp
+from functools import reduce
+from nltk.corpus import stopwords
 import logging as log
-log.basicConfig(level=log.DEBUG)
+log.basicConfig(level=log.DEBUG, format='%(asctime)s %(message)s')
+import re
 #import gensim
 #import nltk
 #import ...
@@ -21,13 +23,17 @@ log.basicConfig(level=log.DEBUG)
 
 
 class Model:
-    def __init__(self, trainDataset, N_train, testDataset=None, model = LogReg):
+    def __init__(self, trainDataset,  testDataset=None, N_train=False,model = LogReg):
         self.OurModel = model() #RF, SVM, Reglog
-        self.FeatureFunctions = [self.feat1,self.feat2,self.feat3]
-        self.FeatureName = ["dist", "dist_pond", "name3"]
-        self.trainData = pd.read_csv(trainDataset, low_memory=False).sample(N_train, random_state=23)
+        self.FeatureFunctions = [self.feat1,self.feat2,self.feat3,self.feat4,self.feat5]
+        self.FeatureName = ["dist", "dist_pond", "common_words","common_words_ratio","sentence_length_difference"]
+        if N_train:
+            self.trainData = trainDataset.sample(N_train, random_state=23)
+        else:
+            self.trainData = trainDataset
         self.testData = testDataset if testDataset is not None else pd.DataFrame()
         self.loadFeatures()
+
 
 
     def saveFeatures(self, name='features.csv', test=False):
@@ -51,28 +57,32 @@ class Model:
 
 
 
-    def ComputeFeatures(self, test = False, features= [0,1,2]):
+    def ComputeFeatures(self, test = False, features= None):
         '''
         Compute selected features, replace in existing (?) self.Features
         :param features: 
         :return: 
         '''
+        if features is None:
+            features = range(len(self.FeatureFunctions))
         if not test:
             for f in features:
-                log.info('Computing features %s ...'%f)
+                log.debug('Computing features %s ...'%f)
                 #j'ai changé trainData[['question1','question2']] pour trainData
                 applyTemp = self.trainData.apply(self.FeatureFunctions[f], axis=1)
-                log.info('Done !')
+                log.debug('Done !')
                 if isinstance(applyTemp, pd.Series):
+                    log.debug(self.FeatureName[f])
                     self.Features[self.FeatureName[f]] = applyTemp
                 else:
                     for col in applyTemp.columns:
                         self.Features[self.FeatureName[f] + col] = applyTemp[col]
+                        log.debug(self.FeatureName[f]+col)
         else:
             for f in features:
-                log.info('Computing features %s ...' % f)
+                log.debug('Computing features %s ...' % f)
                 applyTemp = self.trainData.apply(self.FeatureFunctions[f], axis=1)
-                log.info('Done !')
+                log.debug('Done !')
                 if isinstance(applyTemp, pd.Series):
                     self.testFeatures[self.FeatureName[f]] = applyTemp
                 else:
@@ -94,7 +104,9 @@ class Model:
         return res
 
 
-    def CrossValidate(self, cv=10):
+    def CrossValidate(self,trainDataX=None, trainDataY=None,  cv=10):
+        trainDataX = self.Features.ix[:, self.Features.columns != 'is_duplicate'] if trainDataX is None else trainDataX
+        trainDataY = self.Features.is_duplicate if trainDataY is None else trainDataY
         Metrics = {}
         Metrics['accuracy'] = make_scorer(accuracy_score)
         Metrics['F1'] = make_scorer(f1_score)
@@ -102,8 +114,7 @@ class Model:
         Metrics['Recall']= make_scorer(recall_score)
         Metrics['Loss']= make_scorer(loss, greater_is_better=False, needs_proba=True)
         for metric in Metrics:
-            scores = CV(self.OurModel, self.Features.ix[:, self.Features.columns != 'is_duplicate'],
-                          self.Features.is_duplicate, cv=cv,scoring=Metrics[metric])
+            scores = CV(self.OurModel, trainDataX, trainDataY, cv=cv,scoring=Metrics[metric])
             log.info(metric + " : %0.2f (+/- %0.2f)" % (scores.mean(), scores.std() * 2))
 
     
@@ -111,61 +122,88 @@ class Model:
     def ChangeModel(self, model=LogReg):
         self.OurModel = model() #Changer RegLog en random forest/SVM
 
-    def Preprocessing(self,N_train):
-        import functions_preproc as fn_pp
+    def Preprocessing(self):
         #Preprocess string function
-        self.trainData = self.trainData.dropna(how="any") 
-        self.trainData['question1_mod'] = pd.Series(dtype=object)
-        self.trainData['question1_mod'] = pd.Series(dtype=object)
+        self.trainData = self.trainData.dropna(how="any")
+        log.debug("CLEANING SENTENCES...")
+        STOP_WORDS = set(stopwords.words())
+        regex = re.compile('([^\s\w]|_)+')
         for col,col_mod in zip(['question1', 'question2'],['question1_mod', 'question2_mod']):
-            self.trainData[col_mod] = self.trainData[col].apply(fn_pp.clean_sentence)
-        corpus = [];
-        tfidf_list_q1 = [None] * N_train;
-        tfidf_list_q2 = [None] * N_train;
+            self.trainData[col_mod] = self.trainData[col].apply(fn_pp.clean_sentence,args=[STOP_WORDS,regex])
+        log.debug("DONE !")
 
-        for col in ['question1', 'question2']:
-            for sentence in self.trainData[col].iteritems():
-                corpus.append(sentence[1])
+        log.debug("FILLING CORPUS...")
+        corpus = self.trainData['question1'].tolist() + self.trainData['question2'].tolist()
+        log.debug("DONE ! Corpus : %s"%corpus[:10])
+
+        log.debug("TRAINING TFIDF ...")
+        tfidf_list_q1 = {}
+        tfidf_list_q2 = {}
         tf = TfidfVectorizer(input='content', analyzer='word', ngram_range=(0,1),
                      min_df = 0, stop_words = 'english', sublinear_tf=True)
         tfidf_matrix = tf.fit_transform(corpus)
         feature_names = tf.get_feature_names()
-        del corpus 
-        print('corpus borrado')
-        for i in range(N_train):
-            tfidf_list_q1[i] = fn_pp.tfidf_weights(i,tfidf_matrix,feature_names)
-            tfidf_list_q2[i] = fn_pp.tfidf_weights(N_train + i,tfidf_matrix,feature_names)
-    
-        print('listas tfidf creadas')
-        mat_id = self.trainData['id'].values
-    
-        self.trainData['dict_tfidf_q1'] = pd.Series(np.array(tfidf_list_q1), index = mat_id)
-        self.trainData['dict_tfidf_q2'] = pd.Series(np.array(tfidf_list_q2), index = mat_id)
-        print('Series tfidf creados')
-        del tfidf_matrix, feature_names
+        for i,index in enumerate(self.trainData.index):
+            tfidf_list_q1[index] = fn_pp.tfidf_weights(i, tfidf_matrix, feature_names)
+            tfidf_list_q2[index] = fn_pp.tfidf_weights(i+len(self.trainData), tfidf_matrix, feature_names)
+        log.debug("DONE ! Liste : %s"%tfidf_list_q1.items()[:10])
+        self.trainData['dict_tfidf_q1'] = pd.Series(tfidf_list_q1)
+        self.trainData['dict_tfidf_q2'] = pd.Series(tfidf_list_q2)
 
     #Nos features
     #@staticmethod
-    def feat1(self,strs):
-    	import functions_preproc as fn_pp
+    def feat1(self,row):
         """Fonction de distance w2v entre deux vecteurs moyens non pondérés"""
-        q1 = fn_pp.prom_preg(self.trainData['question1_mod'], self.trainData['dict_tfidf_q1'], pond = False);
-        q2 = fn_pp.prom_preg(self.trainData['question2_mod'], self.trainData['dict_tfidf_q2'], pond = False);    
+        q1 = fn_pp.prom_preg(row['question1_mod'], row['dict_tfidf_q1'], pond = False);
+        q2 = fn_pp.prom_preg(row['question2_mod'], row['dict_tfidf_q2'], pond = False);
         return fn_pp.distancia(q1,q2)
 
     #@staticmethod
-    def feat2(self):
-    	import functions_preproc as fn_pp
+    def feat2(self,row):
         """Fonction de distance w2v entre deux vecteurs moyens oui pondérés"""
-        q1 = fn_pp.prom_preg(self.trainData['question1_mod'], self.trainData['dict_tfidf_q1'], pond = True);
-        q2 = fn_pp.prom_preg(self.trainData['question2_mod'], self.trainData['dict_tfidf_q2'], pond = True);    
-        return fn_pp.distancia(q1,q2)
+        q1 = fn_pp.prom_preg(row['question1_mod'], row['dict_tfidf_q1'], pond=True);
+        q2 = fn_pp.prom_preg(row['question2_mod'], row['dict_tfidf_q2'], pond=True);
+        return fn_pp.distancia(q1, q2)
 
         
 
     @staticmethod
-    def feat3(strs):
-        return 0
+    def feat3(row):
+        '''
+        :return: Number of Common Words
+        '''
+        word_list1 = set(row.question1_mod)
+        word_list2 = set(row.question2_mod)
+        feat = len(word_list1.intersection(word_list2))
+        if feat !=feat:
+            print row
+        return feat
+
+    def feat4(self,row):
+        '''
+        :param q1: 
+        :param q2: 
+        :return: Ratio of common words
+        '''
+        word_list1 = set(row.question1_mod)
+        word_list2 = set(row.question2_mod)
+        feat = float(len(word_list1.intersection(word_list2))) / len(word_list1.union(word_list2)) if len(word_list1.union(word_list2)) != 0 else 0
+        if feat !=feat:
+            print row
+        return feat#**0.21
+
+
+
+    def feat5(self,row):
+        '''
+        :param q1: 
+        :param q2: 
+        :return: words length difference
+        '''
+        feat = np.abs(len(row.question2_mod) - len(row.question1_mod))
+        if feat !=feat:
+            print row
+        return feat
 
 
 
@@ -173,4 +211,6 @@ class Model:
 if __name__ == "__main__":
     TrainSet = pd.read_csv('train.csv',index_col = 0)
     TestSet = pd.read_csv('test.csv',index_col = 0)
-    MonModele = Model(TrainSet,N_train,TestSet)
+    MonModele = Model(TrainSet, TestSet, 100000)
+    MonModele.Preprocessing()
+    MonModele.ComputeFeatures()
